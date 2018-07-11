@@ -1,0 +1,9 @@
+# c++
+*.o
+output
+
+# cmake
+CMakeFiles
+Makefile
+CMakeCache.txt
+cmake_install.cmake
