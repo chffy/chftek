@@ -11,67 +11,74 @@ private:
     std::mutex tmp;
     std::condition_variable mCond;
     std::deque<T> mData;
-    int mSize;
+    int mMaxSize;
 
-    bool isEmptyWithoutLock();
+    bool IsEmptyWithoutLock();
 
-    bool isFullWithoutLock();
+    bool IsFullWithoutLock();
 
 public:
-    ObjectBuffer(int size);
+    ObjectBuffer(int maxSize);
 
-    bool isEmpty();
+    bool IsEmpty();
 
-    bool isFull();
+    bool IsFull();
+    
+    int Size();
 
-    void push(T element);
+    void Push(T &&element);
 
-    T pop();
+    T Pop();
 };
 
 template<typename T>
-bool ObjectBuffer<T>::isEmptyWithoutLock() {
+bool ObjectBuffer<T>::IsEmptyWithoutLock() {
     return mData.empty();
 }
 
 template<typename T>
-bool ObjectBuffer<T>::isFullWithoutLock() {
-    return mData.size() >= mSize;    
+bool ObjectBuffer<T>::IsFullWithoutLock() {
+    return mData.size() >= mMaxSize;
 }
 
 template<typename T>
-ObjectBuffer<T>::ObjectBuffer(int size) {
-    mSize = size;
+ObjectBuffer<T>::ObjectBuffer(int maxSize): mMaxSize(maxSize) {
 }
 
 template<typename T>
-bool ObjectBuffer<T>::isEmpty() {
+bool ObjectBuffer<T>::IsEmpty() {
     std::unique_lock<std::mutex> _(mMutex);
-    return isEmptyWithoutLock();
+    return IsEmptyWithoutLock();
 }
 
 template<typename T>
-bool ObjectBuffer<T>::isFull() {
+bool ObjectBuffer<T>::IsFull() {
     std::unique_lock<std::mutex> _(mMutex);
-    return isFullWithoutLock();
+    return IsFullWithoutLock();
 }
 
 template<typename T>
-void ObjectBuffer<T>::push(T element) {
+int ObjectBuffer<T>::Size() {
     std::unique_lock<std::mutex> _(mMutex);
-    mCond.wait(_, [this] {return isFullWithoutLock() == false; });
-    mData.push_back(element);
+    return mData.size();
+}
+
+template<typename T>
+void ObjectBuffer<T>::Push(T &&element) {
+    std::unique_lock<std::mutex> _(mMutex);
+    mCond.wait(_, [this] {return IsFullWithoutLock() == false; });
+    mData.emplace_back(std::move(element));
     mCond.notify_all();
 }
 
 template<typename T>
-T ObjectBuffer<T>::pop() {
+T ObjectBuffer<T>::Pop() {
     std::unique_lock<std::mutex> _(mMutex);
-    mCond.wait(_, [this] {return isEmptyWithoutLock() == false; });
-    T element = mData.front();
+    mCond.wait(_, [this] {return IsEmptyWithoutLock() == false; });
+    T element = std::move(mData.front());
     mData.pop_front();
     mCond.notify_all();
-    return element;
+    return std::move(element);
 }
 
 #endif /* ObjectBuffer */

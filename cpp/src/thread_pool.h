@@ -1,90 +1,114 @@
 #ifndef THREAD_POOL_H_
 #define THREAD_POOL_H_
 
+#include "object_buffer.h"
 #include <vector>
-#include <queue>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
 #include <future>
 #include <functional>
+#include <memory>
 
 class ThreadPool {
 public:
-    ThreadPool(size_t size);    
+    enum ThreadPoolMode {
+        PRE_ALLOC_THREAD = 0,
+        RUNTIME_ALLOC_THREAD
+    };
 
-    template<class F, class... Args>
-    auto enqueue(F&& f, Args&&... args) 
-    -> std::future<typename std::result_of<F(Args...)>::type>; 
+    ThreadPool(size_t size, ThreadPoolMode mode=ThreadPoolMode::PRE_ALLOC_THREAD);
 
-    ~ThreadPool();
+    void Stop();
+
+    template<typename T>
+    void SubmitTask(std::function<T()> &&func);
+
+    //template<class Func>
+    //auto enqueue(Func&& func) -> std::future<typename std::result_of<Func()>::type>; 
+
+    ~ThreadPool() {
+        for (auto &worker: mPermanentWorkers) {
+            worker.join();
+        }
+    };
 private:
 
-	std::vector< std::thread > workers; 
-    std::queue< std::function<void()> > mTasks;
+    void AllocPermanentWorkers(size_t size);
+    
+    void addTaskToBuffer(std::packaged_task<void()> &&task);
 
+    std::shared_ptr<ObjectBuffer<std::packaged_task<void()> > > mTaskBufferPtr;
+    std::vector<std::thread> mPermanentWorkers;
     std::mutex mMutex; 
-    std::condition_variable mCond; 
-    bool isStop;
+    std::condition_variable mBufferCond;
+    std::condition_variable mTaskCond;
+    bool mStop;
+    ThreadPoolMode mMode;
+    size_t mSize;
 };
 
-inline ThreadPool::ThreadPool(size_t threads): stop(false)
-{
-    for(size_t i = 0;i<threads;++i)
-        workers.emplace_back( 
-            [this]
-            {
-                for(;;)
+ThreadPool::ThreadPool(size_t size, ThreadPoolMode mode) {
+    mSize = size;
+    mStop = false;
+    mTaskBufferPtr = std::make_shared<ObjectBuffer<std::packaged_task<void()> > >(mSize);
+    mMode = mode;
+    switch (mMode) {
+        case ThreadPoolMode::PRE_ALLOC_THREAD: {
+            AllocPermanentWorkers(mSize);
+            break;
+        }
+        default: {
+            throw std::runtime_error("can't reach here");
+        }
+    }
+}
+
+void ThreadPool::AllocPermanentWorkers(size_t size) {
+    mPermanentWorkers.clear();
+    for (size_t index = 0; index < size; ++index) {
+        auto worker = [this] {
+            while (mStop == false) {
+                std::packaged_task<void()> task;
                 {
-                std::function<void()> task; 
-                    {
-                    std::unique_lock<std::mutex> lock(this->queue_mutex);
-                    this->condition.wait(lock,
-                        [this]{ return this->stop || !this->tasks.empty(); }); 
-                    if(this->stop && this->tasks.empty())
-                        return;
-                    task = std::move(this->tasks.front());
-                    this->tasks.pop();
-
+                    std::unique_lock<std::mutex> _(mMutex);
+                    mTaskCond.wait(_, [this] {
+                        return mStop == true || mTaskBufferPtr->IsEmpty() == false;
+                        });
+                    if (mStop == true && mTaskBufferPtr->IsEmpty() == true) {
+                        return ;
                     }
-
-                task(); 
+                    task = mTaskBufferPtr->Pop();
+                    mBufferCond.notify_one();
                 }
+                task();
             }
-         );
-}
-
-template<class F, class... Args>
-auto ThreadPool::enqueue(F&& f, Args&&... args)  
--> std::future<typename std::result_of<F(Args...)>::type>
-{
-    using return_type = typename std::result_of<F(Args...)>::type;
-    auto task = std::make_shared<std::packaged_task<return_type()> >(  
-            std::bind(std::forward<F>(f), std::forward<Args>(args)...) 
-        );
-    std::future<return_type> res = task->get_future();   
-    {
-        std::unique_lock<std::mutex> lock(queue_mutex); 
-        if(stop)
-            throw std::runtime_error("enqueue on stopped ThreadPool");
-
-        tasks.emplace([task](){ (*task)(); }); 
+        };
+        mPermanentWorkers.emplace_back(worker);
     }
-    condition.notify_one(); 
-    return res;
 }
 
-inline ThreadPool::~ThreadPool()
-{
-    {
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        stop = true;
+void ThreadPool::Stop() {
+    std::unique_lock<std::mutex> _(mMutex);
+    mStop = true;
+    mTaskCond.notify_all();
+}
+
+template<typename T>
+void ThreadPool::SubmitTask(std::function<T()> &&func) {
+    auto rowTask = std::make_shared<std::packaged_task<T()> >(func);
+    auto task = std::move(std::packaged_task<void()>([rowTask] { (*rowTask)();}));
+    addTaskToBuffer(std::move(task));
+}
+
+void ThreadPool::addTaskToBuffer(std::packaged_task<void()> &&task) {
+    std::unique_lock<std::mutex> _(mMutex);
+    if (mStop == true) {
+        throw std::runtime_error("thread pool is dead...");
     }
-    condition.notify_all(); 
-    for(std::thread &worker: workers)
-        worker.join(); 
+    mBufferCond.wait(_, [this] {return mTaskBufferPtr->IsFull() == false;});
+    mTaskBufferPtr->Push(std::move(task));
+    mTaskCond.notify_one();
+    
 }
-
-
-
 #endif /* ThreadPool */

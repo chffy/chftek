@@ -1,25 +1,18 @@
-#include "object_buffer.h"
+#include "thread_pool.h"
 #include <chrono>
 #include <thread>
 #include <memory>
 #include <iostream>
 #include <cstdio>
-
-void push(std::shared_ptr<ObjectBuffer<int> > a) {
-    a->push(1);
-}
-
-void pop(std::shared_ptr<ObjectBuffer<int> > a) {
-    std::cout << a->pop() << std::endl;
-}
-
+#include <functional>
+#include <thread>
 
 int main() 
 {
-    auto a = std::make_shared<ObjectBuffer<int> >(100);
-    std::thread t1(pop, a);
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-    std::thread t2(push, a);
-    t1.join();
-    t2.join();
+    std::shared_ptr<ThreadPool> pool = std::make_shared<ThreadPool>(3);
+    for (int i = 0; i < 10; ++i) {
+        std::function<void()> a = [i] ()-> void {std::cout << i << std::endl;};
+        pool->SubmitTask(std::move(a));
+    }
+    pool->Stop();
 }
