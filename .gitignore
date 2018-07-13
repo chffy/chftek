@@ -1,6 +1,7 @@
 # c++
 *.o
 output
+build
 
 # cmake
 CMakeFiles

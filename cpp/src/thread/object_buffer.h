@@ -26,7 +26,7 @@ public:
     
     int Size();
 
-    void Push(T &&element);
+    void Push(T element);
 
     T Pop();
 };
@@ -64,7 +64,7 @@ int ObjectBuffer<T>::Size() {
 }
 
 template<typename T>
-void ObjectBuffer<T>::Push(T &&element) {
+void ObjectBuffer<T>::Push(T element) {
     std::unique_lock<std::mutex> _(mMutex);
     mCond.wait(_, [this] {return IsFullWithoutLock() == false; });
     mData.emplace_back(std::move(element));
