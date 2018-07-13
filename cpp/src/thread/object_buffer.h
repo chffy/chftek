@@ -9,7 +9,8 @@ class ObjectBuffer {
 private:
     std::mutex mMutex;
     std::mutex tmp;
-    std::condition_variable mCond;
+    std::condition_variable mPushCond;
+    std::condition_variable mPopCond;
     std::deque<T> mData;
     int mMaxSize;
 
@@ -66,18 +67,18 @@ int ObjectBuffer<T>::Size() {
 template<typename T>
 void ObjectBuffer<T>::Push(T element) {
     std::unique_lock<std::mutex> _(mMutex);
-    mCond.wait(_, [this] {return IsFullWithoutLock() == false; });
+    mPopCond.wait(_, [this] {return IsFullWithoutLock() == false; });
     mData.emplace_back(std::move(element));
-    mCond.notify_all();
+    mPushCond.notify_one();
 }
 
 template<typename T>
 T ObjectBuffer<T>::Pop() {
     std::unique_lock<std::mutex> _(mMutex);
-    mCond.wait(_, [this] {return IsEmptyWithoutLock() == false; });
+    mPushCond.wait(_, [this] {return IsEmptyWithoutLock() == false; });
     T element = std::move(mData.front());
     mData.pop_front();
-    mCond.notify_all();
+    mPopCond.notify_one();
     return std::move(element);
 }
 
